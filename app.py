@@ -47,15 +47,20 @@ if "orthoptiste_id" not in df.columns:
 # ===================================================
 # CHOIX DU MODE
 # ===================================================
-mode = st.sidebar.selectbox(
-    "Choisir un mode",
-    ["Patient", "Démo Patient", "Test Orthoptiste", "Orthoptiste"]
-)
 
 # ===================================================
 # IDENTIFIANT ORTHOPTISTE
 # ===================================================
 orthoptiste = st.sidebar.text_input("Identifiant orthoptiste (obligatoire)")
+
+# 🔒 Menu différent pour toi et pour les autres orthoptistes
+if orthoptiste == "melina_admin":
+    modes = ["Patient", "Démo Patient", "Test Orthoptiste", "Orthoptiste", "Liste des patients"]
+else:
+    modes = ["Patient", "Démo Patient", "Test Orthoptiste", "Orthoptiste"]
+
+mode = st.sidebar.selectbox("Choisir un mode", modes)
+
 if not orthoptiste:
     st.sidebar.warning("Veuillez entrer votre identifiant orthoptiste.")
     st.stop()
@@ -824,6 +829,49 @@ elif mode == "Test Orthoptiste":
                         if rt < 0.5:
                             st.session_state.impulsivity += 1
                         st.session_state.errors_inhibition += 1
+                        
+# ===================================================
+# MODE : LISTE DES PATIENTS
+# ===================================================
+
+elif mode == "Liste des patients":
+    
+    # 🔒 Sécurité interne : accès réservé
+    if orthoptiste != "melina_admin":
+        st.error("⛔ Accès réservé. Cette section est uniquement pour l’administratrice.")
+        st.stop()
+
+
+    section_title("📋 Liste des patients enregistrés", "📋")
+
+    # Charger le CSV
+    try:
+        df = pd.read_csv(FILE_PATH)
+    except:
+        st.error("Aucune donnée patient trouvée.")
+        st.stop()
+
+    if df.empty:
+        st.info("Aucun patient enregistré pour le moment.")
+        st.stop()
+
+    # Regrouper par patient
+    patients = df.groupby("patient_id").agg(
+        nb_seances=("session_number", "count"),
+        derniere_seance=("timestamp", "max")
+    ).reset_index()
+
+    st.subheader("Patients enregistrés")
+    st.dataframe(patients)
+
+    # Sélection du patient
+    choix = st.selectbox("Choisir un patient", patients["patient_id"].unique())
+
+    if st.button("Ouvrir le dossier"):
+        st.session_state["patient_id"] = choix
+        st.success(f"Dossier du patient {choix} chargé.")
+        st.info("Rendez-vous dans l’onglet **Orthoptiste** pour voir les séances.")
+
 # ===================================================
 # MODE ORTHOPTISTE – DASHBOARD PRO
 # ===================================================
