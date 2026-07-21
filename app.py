@@ -507,16 +507,26 @@ if mode == "Patient":
             green_box("🟡 Nouveau patient. Aucune séance enregistrée.")
 
     # -----------------------------
-    # RÉCUPÉRATION DIFFICULTÉ
-    # -----------------------------
-    if patient_id in df["patient_id"].values:
-        subset = df[(df["patient_id"] == patient_id) & (df["orthoptiste_id"] == orthoptiste)]
-        if len(subset) > 0:   # ← AJOUT SÉCURITÉ
+# RÉCUPÉRATION DIFFICULTÉ
+# -----------------------------
+# Ne charger la difficulté enregistrée qu’avant le démarrage.
+# Pendant la séance, la difficulté adaptative en mémoire reste prioritaire.
+
+if patient_id in df["patient_id"].values:
+    subset = df[
+        (df["patient_id"] == patient_id)
+        & (df["orthoptiste_id"] == orthoptiste)
+    ]
+
+    if len(subset) > 0:
+        if not st.session_state.started:
             last = subset.sort_values("session_number").iloc[-1]
             st.session_state.difficulty = int(last["difficulty"])
-        else:
-            st.session_state.difficulty = 5
     else:
+        if not st.session_state.started:
+            st.session_state.difficulty = 5
+else:
+    if not st.session_state.started:
         st.session_state.difficulty = 5
 
     # -----------------------------
