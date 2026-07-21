@@ -509,25 +509,19 @@ if mode == "Patient":
     # -----------------------------
     # RÉCUPÉRATION DIFFICULTÉ
     # -----------------------------
-    # Ne charger la difficulté enregistrée qu’avant le démarrage.
-    # Pendant la séance, la difficulté adaptative en mémoire reste prioritaire.
-
+    # Ne charger la difficulté enregistrée qu'avant le démarrage.
+    # Pendant la séance, la valeur adaptative en mémoire doit rester prioritaire.
     if patient_id in df["patient_id"].values:
-       subset = df[
-        (df["patient_id"] == patient_id)
-        & (df["orthoptiste_id"] == orthoptiste)
-    ]
-
-    if len(subset) > 0:
-        if not st.session_state.started:
-            last = subset.sort_values("session_number").iloc[-1]
-            st.session_state.difficulty = int(last["difficulty"])
+        subset = df[(df["patient_id"] == patient_id) & (df["orthoptiste_id"] == orthoptiste)]
+        if len(subset) > 0:   # ← AJOUT SÉCURITÉ
+            if not st.session_state.started:
+                last = subset.sort_values("session_number").iloc[-1]
+                st.session_state.difficulty = int(last["difficulty"])
+        else:
+            st.session_state.difficulty = 5
     else:
         if not st.session_state.started:
             st.session_state.difficulty = 5
-else:
-    if not st.session_state.started:
-        st.session_state.difficulty = 5
 
     # -----------------------------
     # CHOIX MODE RÉÉDUCATION
