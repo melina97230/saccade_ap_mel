@@ -507,13 +507,13 @@ if mode == "Patient":
             green_box("🟡 Nouveau patient. Aucune séance enregistrée.")
 
     # -----------------------------
-# RÉCUPÉRATION DIFFICULTÉ
-# -----------------------------
-# Ne charger la difficulté enregistrée qu’avant le démarrage.
-# Pendant la séance, la difficulté adaptative en mémoire reste prioritaire.
+    # RÉCUPÉRATION DIFFICULTÉ
+    # -----------------------------
+    # Ne charger la difficulté enregistrée qu’avant le démarrage.
+    # Pendant la séance, la difficulté adaptative en mémoire reste prioritaire.
 
-if patient_id in df["patient_id"].values:
-    subset = df[
+    if patient_id in df["patient_id"].values:
+       subset = df[
         (df["patient_id"] == patient_id)
         & (df["orthoptiste_id"] == orthoptiste)
     ]
