@@ -121,13 +121,19 @@ def hash_patient(pid, birth):
 # ===================================================
 def analyse_attention(times):
     if len(times) < 3:
-        return {"variabilite": 0.0, "trend": 0.0, "mean_rt": 0.0}
+        return {
+            "variabilite": 0.0,
+            "trend": 0.0,
+            "mean_rt": float(np.mean(times)) if times else 0.0,
+            "n_rt": len(times)
+        }
 
     t = np.array(times)
     return {
         "variabilite": float(np.std(t)),
         "trend": float(np.polyfit(range(len(t)), t, 1)[0]),
-        "mean_rt": float(np.mean(t))
+        "mean_rt": float(np.mean(t)),
+        "n_rt": len(times)
     }
 
 # ===================================================
@@ -145,7 +151,7 @@ def generate_stimuli_full():
 # GESTION DES ERREURS
 # ===================================================
 def process_click(clicked, start_time):
-    rt = time.time() - start_time
+    rt = time.perf_counter() - start_time
 
     if clicked == "🟢":
         return rt, None, "🟢 **Bravo !**"
@@ -163,16 +169,42 @@ def update_error_counters(type_erreur):
         st.session_state.errors_inhibition += 1
         st.session_state.impulsivity += 1
 
+
+def prepare_stimulus_round(difficulty):
+    """Conserve la même cible et les mêmes distracteurs jusqu'au clic."""
+    difficulty = int(difficulty)
+    current = st.session_state.get("stimuli", [])
+
+    if st.session_state.get("target") is None or len(current) != difficulty:
+        target_index = random.randint(0, difficulty - 1)
+        pool = generate_stimuli_full()
+        st.session_state.stimuli = [
+            "🟢" if i == target_index else random.choice(pool)
+            for i in range(difficulty)
+        ]
+        st.session_state.target = target_index
+        st.session_state.stimulus_round += 1
+        st.session_state.stimulus_start_time = time.perf_counter()
+
+
+def complete_stimulus_round():
+    """Force une nouvelle série de stimuli au prochain rerun."""
+    st.session_state.target = None
+    st.session_state.stimuli = []
+    st.session_state.stimulus_start_time = None
+
 # ===================================================
 # BIOMARQUEURS
 # ===================================================
-def compute_biomarkers(state, errors, impulsivity, inhib_errors):
+def compute_biomarkers(state, errors, impulsivity, inhib_errors, correct_responses=0):
     mean_rt = max(state["mean_rt"], 0.01)
 
     cvrt = state["variabilite"] / mean_rt
-    impuls_ratio = impulsivity / max(1, (errors + impulsivity + inhib_errors))
-    inhib_ratio = inhib_errors / max(1, (errors + impulsivity + inhib_errors))
-    attn_ratio = errors / max(1, (errors + impulsivity + inhib_errors))
+    total_responses = max(1, int(correct_responses) + int(errors))
+    attention_errors = max(0, int(errors) - int(inhib_errors))
+    impuls_ratio = impulsivity / total_responses
+    inhib_ratio = inhib_errors / total_responses
+    attn_ratio = attention_errors / total_responses
 
     return {
         "cvrt": float(cvrt),
@@ -387,8 +419,19 @@ def train_neuro_model(df):
         "errors_inhibition", "errors", "difficulty", "age"
     ]
 
-    # On retire les lignes incomplètes
-    df_train = df.dropna(subset=features + ["neuro_index"]).copy()
+    # On retire les lignes incomplètes et les anciennes séances dans lesquelles
+    # les clics corrects n'avaient pas produit de temps de réaction.
+    df_train = df.dropna(subset=features + ["neuro_index", "score"]).copy()
+    df_train = df_train[
+        (df_train["score"] >= 3) &
+        (df_train["mean_rt"] > 0)
+    ]
+
+    if len(df_train) < 5:
+        raise ValueError(
+            "Pas assez de séances valides pour entraîner le modèle IA "
+            "(5 séances avec au moins 3 RT sont nécessaires)."
+        )
 
     X = df_train[features]
     y = df_train["neuro_index"]
@@ -426,7 +469,10 @@ defaults = {
     "end_time": None,
     "difficulty": 5,
     "target": None,
-    "force_end": False
+    "force_end": False,
+    "stimuli": [],
+    "stimulus_round": 0,
+    "stimulus_start_time": None
 }
 
 for key, value in defaults.items():
@@ -493,6 +539,17 @@ if mode == "Patient":
         st.session_state.start_time = time.time()
         st.session_state.end_time = time.time() + duree_sec
         st.session_state.force_end = False
+        st.session_state.score = 0
+        st.session_state.errors = 0
+        st.session_state.impulsivity = 0
+        st.session_state.errors_inhibition = 0
+        st.session_state.reaction_times = []
+        st.session_state.feedback = ""
+        st.session_state.target = None
+        st.session_state.stimuli = []
+        st.session_state.stimulus_round = 0
+        st.session_state.stimulus_start_time = None
+        st.rerun()
 
 # ===================================================
 # LANCEMENT DU JEU
@@ -529,26 +586,29 @@ Ignore les autres symboles, lettres ou formes.
         # -----------------------------
         # AFFICHAGE DES STIMULI
         # -----------------------------
-        target_index = random.randint(0, difficulty - 1)
+        prepare_stimulus_round(difficulty)
         cols = st.columns(difficulty)
         clicked = None
+        round_id = st.session_state.stimulus_round
 
         for i in range(difficulty):
             with cols[i]:
-                if i == target_index:
-                    if st.button("🟢", key=f"stim_noIA_green_{i}"):
+                stimulus = st.session_state.stimuli[i]
+                if i == st.session_state.target:
+                    if st.button("🟢", key=f"stim_noIA_green_{round_id}_{i}"):
                         clicked = "🟢"
                 else:
-                    distractor = random.choice(generate_stimuli_full())
-                    if st.button(distractor, key=f"stim_noIA_dist_{i}"):
-                        clicked = distractor
+                    if st.button(stimulus, key=f"stim_noIA_dist_{round_id}_{i}"):
+                        clicked = stimulus
 
         # -----------------------------
         # GESTION DU CLIC
         # -----------------------------
         if clicked is not None:
 
-            rt, type_erreur, feedback = process_click(clicked, st.session_state.start_time)
+            rt, type_erreur, feedback = process_click(
+                clicked, st.session_state.stimulus_start_time
+            )
 
             if type_erreur is None:
                 st.session_state.reaction_times.append(rt)
@@ -557,7 +617,8 @@ Ignore les autres symboles, lettres ou formes.
                 update_error_counters(type_erreur)
 
             st.session_state.feedback = feedback
-            st.session_state.start_time = time.time()
+            complete_stimulus_round()
+            st.rerun()
 
         if "feedback" in st.session_state:
             st.markdown(f"### {st.session_state.feedback}")
@@ -575,7 +636,8 @@ Ignore les autres symboles, lettres ou formes.
             state,
             state["errors"],
             state["impulsivity"],
-            st.session_state.errors_inhibition
+            st.session_state.errors_inhibition,
+            st.session_state.score
 )
 
         neuro_index = compute_neuro_index(
@@ -593,6 +655,7 @@ Ignore les autres symboles, lettres ou formes.
             st.info("⏳ Temps écoulé — séance terminée.")
             if st.button("Enregistrer la séance maintenant"):
                 save_session(patient_id, age, tdah, mode_reeduc, state, biomarkers, difficulty, neuro_index)
+                st.session_state.started = 0
                 st.success("Séance enregistrée avec succès !")
                 st.rerun()
 
@@ -601,6 +664,7 @@ Ignore les autres symboles, lettres ou formes.
         # -----------------------------
         if st.button("Terminer la séance"):
             save_session(patient_id, age, tdah, mode_reeduc, state, biomarkers, difficulty, neuro_index)
+            st.session_state.started = 0
             st.success("Séance enregistrée avec succès !")
             st.rerun()
 
@@ -623,14 +687,16 @@ L’IA ajuste automatiquement la difficulté en fonction :
         state = {
             **analysis,
             "errors": st.session_state.errors,
-            "impulsivity": st.session_state.impulsivity
+            "impulsivity": st.session_state.impulsivity,
+            "errors_inhibition": st.session_state.errors_inhibition
         }
 
         biomarkers = compute_biomarkers(
             state,
             state["errors"],
             state["impulsivity"],
-            st.session_state.errors_inhibition
+            st.session_state.errors_inhibition,
+            st.session_state.score
         )
         neuro_index = compute_neuro_index(
     state,
@@ -641,7 +707,11 @@ L’IA ajuste automatiquement la difficulté en fonction :
 )
 
         # Calcul de la difficulté adaptative
-        st.session_state.difficulty = compute_difficulty(state, st.session_state.difficulty)
+        # La difficulté ne change qu'entre deux séries, pas à chaque rerun.
+        if st.session_state.target is None:
+            st.session_state.difficulty = compute_difficulty(
+                state, st.session_state.difficulty
+            )
         difficulty = int(st.session_state.difficulty)
 
         st.caption(f"Difficulté adaptative : **{difficulty}**")
@@ -649,26 +719,29 @@ L’IA ajuste automatiquement la difficulté en fonction :
         # -----------------------------
         # AFFICHAGE DES STIMULI
         # -----------------------------
-        target_index = random.randint(0, difficulty - 1)
+        prepare_stimulus_round(difficulty)
         cols = st.columns(difficulty)
         clicked = None
+        round_id = st.session_state.stimulus_round
 
         for i in range(difficulty):
             with cols[i]:
-                if i == target_index:
-                    if st.button("🟢", key=f"stim_IA_green_{i}"):
+                stimulus = st.session_state.stimuli[i]
+                if i == st.session_state.target:
+                    if st.button("🟢", key=f"stim_IA_green_{round_id}_{i}"):
                         clicked = "🟢"
                 else:
-                    distractor = random.choice(generate_stimuli_full())
-                    if st.button(distractor, key=f"stim_IA_dist_{i}"):
-                        clicked = distractor
+                    if st.button(stimulus, key=f"stim_IA_dist_{round_id}_{i}"):
+                        clicked = stimulus
 
         # -----------------------------
         # GESTION DU CLIC
         # -----------------------------
         if clicked is not None:
 
-            rt, type_erreur, feedback = process_click(clicked, st.session_state.start_time)
+            rt, type_erreur, feedback = process_click(
+                clicked, st.session_state.stimulus_start_time
+            )
 
             if type_erreur is None:
                 st.session_state.reaction_times.append(rt)
@@ -677,7 +750,8 @@ L’IA ajuste automatiquement la difficulté en fonction :
                 update_error_counters(type_erreur)
 
             st.session_state.feedback = feedback
-            st.session_state.start_time = time.time()
+            complete_stimulus_round()
+            st.rerun()
 
         if "feedback" in st.session_state:
             st.markdown(f"### {st.session_state.feedback}")
@@ -688,6 +762,7 @@ L’IA ajuste automatiquement la difficulté en fonction :
         if st.session_state.get("force_end", False):
             if st.button("Enregistrer la séance maintenant"):
                save_session(patient_id, age, tdah, mode_reeduc, state, biomarkers, difficulty, neuro_index)
+               st.session_state.started = 0
                st.success("Séance enregistrée avec succès !")
                st.rerun()
 # ===================================================
@@ -723,7 +798,9 @@ elif mode == "Démo Patient":
             state = analyse_attention(reaction_times)
             state["errors"] = errors
             state["impulsivity"] = impulsivity
-            biomarkers = compute_biomarkers(state, errors, impulsivity, inhib_errors)
+            biomarkers = compute_biomarkers(
+                state, errors, impulsivity, inhib_errors, len(reaction_times)
+            )
             difficulty = compute_difficulty(state, difficulty)
 
         neuro_index = compute_neuro_index(state, errors, impulsivity, inhib_errors, biomarkers)
@@ -787,7 +864,8 @@ elif mode == "Test Orthoptiste":
             state,
             st.session_state.errors,
             st.session_state.impulsivity,
-            st.session_state.errors_inhibition
+            st.session_state.errors_inhibition,
+            st.session_state.test_clicks
         )
 
         st.session_state.difficulty = compute_difficulty(state, st.session_state.difficulty)
@@ -965,7 +1043,8 @@ elif mode == "Orthoptiste":
         state,
         last["errors"],
         last["impulsivity"],
-        last["errors_inhibition"]
+        last["errors_inhibition"],
+        last["score"]
     )
 
     neuro_index = last["neuro_index"]
