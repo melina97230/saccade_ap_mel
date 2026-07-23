@@ -397,15 +397,10 @@ def clinical_table(state, biomarkers, neuro_index):
         interpretation.append("• Variabilité faible → bonne stabilité attentionnelle.")
 
     if biomarkers["omission_rate"] > 0.20:
-        interpretation.append(
-            "• Proportion élevée de cibles non sélectionnées dans le délai."
-        )
+        interpretation.append("• Proportion élevée de cibles non sélectionnées dans le délai.")
 
     if biomarkers["commission_rate"] > 0.20:
-        interpretation.append(
-            "• Proportion élevée de clics sur les distracteurs "
-            "au cours de cette séance."
-        )
+        interpretation.append("• Proportion élevée de clics sur les distracteurs ""au cours de cette séance.")
 
     if biomarkers["anticipation_rate"] > 0.10:
         interpretation.append(
