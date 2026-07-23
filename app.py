@@ -34,8 +34,13 @@ else:
     df = pd.DataFrame(columns=[
         "orthoptiste_id", "patient_id", "session_number", "timestamp",
         "age", "tdah", "mode_reeduc",
-        "score", "errors", "impulsivity", "errors_inhibition",
-        "mean_rt", "variabilite", "trend", "cvrt",
+        "score", "errors",
+        "commission_errors", "omissions", "anticipations",
+        "targets_presented",
+        "impulsivity", "errors_inhibition",
+        "impulsivity", "errors_inhibition",
+        "mean_rt", "median_rt", "variabilite", "trend", "cvrt",
+        "omission_rate", "commission_rate", "anticipation_rate",
         "difficulty", "neuro_index",
         "commentaire"
     ])
@@ -99,8 +104,13 @@ def section_title(title, emoji="🌿"):
 COLUMNS = [
     "patient_id", "session_number", "timestamp",
     "age", "tdah", "mode_reeduc",
-    "score", "errors", "impulsivity", "errors_inhibition",
-    "mean_rt", "variabilite", "trend", "cvrt",
+    "score", "errors",
+    "commission_errors", "omissions", "anticipations",
+    "targets_presented",
+    "impulsivity", "errors_inhibition",
+    "impulsivity", "errors_inhibition",
+    "mean_rt", "median_rt", "variabilite", "trend", "cvrt",
+    "omission_rate", "commission_rate", "anticipation_rate",
     "difficulty", "neuro_index",
     "commentaire"  
 ]
@@ -145,7 +155,7 @@ def generate_stimuli_full():
     shapes = ["▲", "■", "◆", "●", "⬟", "⬢"]
     symbols = ["@", "#", "&", "%", "§", "¤"]
     emojis = ["🔵", "🟣", "🟠", "🔺", "🔻", "⭐"]
-    return letters + digits + shapes + symbols + emojis
+    return letters + digits+ emojis + shapes + symbols 
 
 # ===================================================
 # GESTION DES ERREURS
@@ -216,39 +226,86 @@ def compute_biomarkers(state, errors, impulsivity, inhib_errors, correct_respons
 # ===================================================
 # INDEX NEUROVISUEL
 # ===================================================
-def compute_neuro_index(state, errors, impulsivity, inhib_errors, biomarkers):
+def compute_neuro_index(state, biomarkers, min_valid_targets=5):
+    """
+    Indice comportemental exploratoire sur 100.
 
-    attention = 1 / (1 + state["variabilite"] + abs(state["trend"]) + biomarkers["attn_ratio"])
-    speed = 1 / (1 + max(state["mean_rt"], 0.01))
-    impuls = 1 / (1 + biomarkers["impuls_ratio"])
-    inhib = 1 / (1 + biomarkers["inhib_ratio"])
-    stability = 1 / (1 + biomarkers["cvrt"])
+    Il synthétise quatre dimensions :
+    - stabilité des temps de réaction ;
+    - vigilance, estimée par les omissions ;
+    - contrôle de la réponse, estimé par les commissions ;
+    - réponses anticipées.
 
-    index = (
-        attention * 0.28 +
-        speed * 0.22 +
-        impuls * 0.18 +
-        inhib * 0.18 +
-        stability * 0.14
+    Ce score n'est ni diagnostique ni cliniquement validé.
+    """
+
+    targets_presented = int(
+        st.session_state.get("targets_presented", 0)
     )
 
-    return float(index * 100)
+    if targets_presented < min_valid_targets:
+        return np.nan
 
+    stability_score = 1.0 / (
+        1.0 + max(float(biomarkers["cvrt"]), 0.0)
+    )
+
+    vigilance_score = 1.0 - float(
+        biomarkers["omission_rate"]
+    )
+
+    response_control_score = 1.0 - float(
+        biomarkers["commission_rate"]
+    )
+
+    anticipation_control_score = 1.0 - float(
+        biomarkers["anticipation_rate"]
+    )
+
+    components = np.clip(
+        [
+            stability_score,
+            vigilance_score,
+            response_control_score,
+            anticipation_control_score
+        ],
+        0.001,
+        1.0
+    )
+
+    index = 100.0 * float(
+        np.prod(components) ** (1.0 / len(components))
+    )
+
+    return round(index, 2)
 # ===================================================
 # TABLEAU CLINIQUE
 # ===================================================
 def clinical_table(state, biomarkers, neuro_index):
 
     table = {
-        "Variabilité (σ RT)": round(state["variabilite"], 3),
-        "Tendance (drift)": round(state["trend"], 3),
-        "Temps moyen (RT)": round(state["mean_rt"], 3),
-        "CVRT": round(biomarkers["cvrt"], 3),
-        "Erreurs attentionnelles (%)": round(biomarkers["attn_ratio"] * 100, 1),
-        "Impulsivité (%)": round(biomarkers["impuls_ratio"] * 100, 1),
-        "Inhibition (%)": round(biomarkers["inhib_ratio"] * 100, 1),
-        "Index neurovisuel": round(neuro_index, 1)
-    }
+    "Temps de réaction moyen (s)": round(state["mean_rt"], 3),
+    "Temps de réaction médian (s)": round(state["median_rt"], 3),
+    "Variabilité des RT – IIVRT (s)": round(state["variabilite"], 3),
+    "Coefficient de variation – CVRT": round(biomarkers["cvrt"], 3),
+    "Tendance des RT": round(state["trend"], 3),
+
+    "Taux d’omissions (%)": round(
+        biomarkers["omission_rate"] * 100, 1
+    ),
+    "Taux de commissions (%)": round(
+        biomarkers["commission_rate"] * 100, 1
+    ),
+    "Taux de réponses anticipées (%)": round(
+        biomarkers["anticipation_rate"] * 100, 1
+    ),
+
+    "Index comportemental neurovisuel": (
+        "Données insuffisantes"
+        if np.isnan(neuro_index)
+        else round(neuro_index, 1)
+    )
+}
 
     interpretation = []
 
@@ -263,7 +320,7 @@ def clinical_table(state, biomarkers, neuro_index):
         interpretation.append("• Impulsivité faible → bon contrôle inhibiteur.")
 
     if biomarkers["inhib_ratio"] > 0.20:
-        interpretation.append("• Erreurs d’inhibition élevées → difficulté à inhiber les distracteurs.")
+        interpretation.append("• Proportion élevée de clics sur les distracteurs " "au cours de cette séance.")
     elif biomarkers["inhib_ratio"] < 0.10:
         interpretation.append("• Inhibition correcte.")
 
@@ -273,7 +330,7 @@ def clinical_table(state, biomarkers, neuro_index):
         interpretation.append("• Bonne attention sélective.")
 
     if state["mean_rt"] > 1.2:
-        interpretation.append("• Temps de réaction lent → ralentissement cognitif.")
+        interpretation.append"• Temps de réaction moyen relativement élevé " "dans les conditions de cette séance.")
     elif state["mean_rt"] < 0.6:
         interpretation.append("• Temps de réaction rapide.")
 
@@ -350,60 +407,86 @@ def save_session(patient_id, age, tdah, mode_reeduc, state, biomarkers, difficul
     session_number = len(df[df["patient_id"] == patient_id]) + 1
 
     session = {
-        "orthoptiste_id": orthoptiste,
-        "patient_id": patient_id,
-        "session_number": session_number,
-        "timestamp": datetime.now().isoformat(),
-        "age": age,
-        "tdah": tdah,
-        "mode_reeduc": mode_reeduc,
-        "score": st.session_state.score,
-        "errors": st.session_state.errors,
-        "impulsivity": st.session_state.impulsivity,
-        "errors_inhibition": st.session_state.errors_inhibition,
-        "mean_rt": state["mean_rt"],
-        "variabilite": state["variabilite"],
-        "trend": state["trend"],
-        "cvrt": biomarkers["cvrt"],
-        "difficulty": difficulty,
-        "neuro_index": neuro_index,
-        "commentaire": st.session_state.get("commentaire", "")
-    }
+    "orthoptiste_id": orthoptiste,
+    "patient_id": patient_id,
+    "session_number": session_number,
+    "timestamp": datetime.now().isoformat(),
+    "age": age,
+    "tdah": tdah,
+    "mode_reeduc": mode_reeduc,
+
+    "score": st.session_state.score,
+    "errors": st.session_state.errors,
+
+    "commission_errors": st.session_state.commission_errors,
+    "omissions": st.session_state.omissions,
+    "anticipations": st.session_state.anticipations,
+    "targets_presented": st.session_state.targets_presented,
+
+    # Compatibilité ancienne structure
+    "impulsivity": st.session_state.impulsivity,
+    "errors_inhibition": st.session_state.errors_inhibition,
+
+    "mean_rt": state["mean_rt"],
+    "median_rt": state["median_rt"],
+    "variabilite": state["variabilite"],
+    "trend": state["trend"],
+
+    "cvrt": biomarkers["cvrt"],
+    "omission_rate": biomarkers["omission_rate"],
+    "commission_rate": biomarkers["commission_rate"],
+    "anticipation_rate": biomarkers["anticipation_rate"],
+
+    "difficulty": difficulty,
+    "neuro_index": neuro_index,
+    "commentaire": st.session_state.get("commentaire", "")
+}
 
     df = pd.concat([df, pd.DataFrame([session])], ignore_index=True)
     df.to_csv(FILE_PATH, index=False)
     
-def compute_difficulty(state, current_difficulty):
+def compute_difficulty(state, biomarkers, current_difficulty):
     """
-    Ajuste la difficulté en fonction :
-    - variabilité (CVRT)
-    - impulsivité
-    - erreurs d’inhibition
-    - tendance (trend)
+    Ajustement algorithmique explicite de la difficulté.
+
+    L'algorithme ne pose aucun diagnostic.
+    Il modifie uniquement le nombre de stimuli.
     """
+    difficulty = int(current_difficulty)
 
-    difficulty = current_difficulty
+    burden = 0
+    favourable = 0
 
-    # Variabilité élevée → difficulté diminue
-    if state["variabilite"] > 0.35:
+    # Fluctuation importante des temps de réaction
+    if biomarkers["cvrt"] > 0.35:
+        burden += 1
+
+    # Cibles manquées
+    if biomarkers["omission_rate"] > 0.20:
+        burden += 1
+
+    # Clics sur distracteurs
+    if biomarkers["commission_rate"] > 0.20:
+        burden += 1
+
+    # Réponses très anticipées
+    if biomarkers["anticipation_rate"] > 0.10:
+        burden += 1
+
+    # Performances relativement stables
+    if (
+        biomarkers["cvrt"] < 0.20
+        and biomarkers["omission_rate"] < 0.10
+        and biomarkers["commission_rate"] < 0.10
+    ):
+        favourable += 1
+
+    if burden >= 2:
         difficulty -= 1
-
-    # Impulsivité élevée → difficulté diminue
-    if state["impulsivity"] > 0.25:
-        difficulty -= 1
-
-    # Erreurs d’inhibition → difficulté diminue
-    if state.get("errors_inhibition", 0) > 2:
-        difficulty -= 1
-
-    # Bonne stabilité → difficulté augmente
-    if state["variabilite"] < 0.20 and state["trend"] < 0:
+    elif favourable >= 1:
         difficulty += 1
 
-    # Bornes
-    difficulty = max(3, min(10, difficulty))
-
-    return difficulty
+    return max(3, min(10, difficulty))
 # ===================================================
 # ENTRAÎNEMENT DU MODÈLE IA
 # ===================================================
@@ -415,9 +498,15 @@ def train_neuro_model(df):
 
     # Variables explicatives
     features = [
-        "mean_rt", "variabilite", "cvrt", "impulsivity",
-        "errors_inhibition", "errors", "difficulty", "age"
-    ]
+        "median_rt",
+        "variabilite",
+        "cvrt",
+        "omission_rate",
+        "commission_rate",
+        "anticipation_rate",
+        "difficulty",
+        "age"
+]
 
     # On retire les lignes incomplètes et les anciennes séances dans lesquelles
     # les clics corrects n'avaient pas produit de temps de réaction.
