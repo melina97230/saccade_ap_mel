@@ -1,324 +1,297 @@
-import os
-from fpdf import FPDF
+from __future__ import annotations
+
+from io import BytesIO
+from pathlib import Path
+from tempfile import NamedTemporaryFile
+
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
+from fpdf import FPDF
+from fpdf.enums import XPos, YPos
+from matplotlib import font_manager
 
-# ===================================================
-# STYLE CLINIQUE – COULEURS APAISANTES
-# ===================================================
 
-COLOR_PRIMARY = (27, 58, 46)      # Vert foncé
-COLOR_SECONDARY = (76, 175, 80)   # Vert clair
-COLOR_LIGHT = (227, 247, 232)     # Vert pastel
+COLOR_PRIMARY = (27, 94, 55)
+COLOR_SECONDARY = (76, 175, 80)
+COLOR_GREY = (90, 100, 95)
 
-# ===================================================
-# OUTIL : CRÉATION D’UN TITRE
-# ===================================================
 
-def pdf_title(pdf, title):
-    pdf.set_font("DejaVu", "B", 20)
-    pdf.set_text_color(*COLOR_PRIMARY)
-    pdf.cell(0, 15, title, ln=True, align="C")
-    pdf.ln(5)
-
-# ===================================================
-# OUTIL : SOUS-TITRE
-# ===================================================
-
-def pdf_subtitle(pdf, subtitle):
-    pdf.set_font("DejaVu", "B", 14)
-    pdf.set_text_color(*COLOR_SECONDARY)
-    pdf.cell(0, 10, subtitle, ln=True)
-    pdf.ln(2)
-
-# ===================================================
-# OUTIL : TEXTE SÉCURISÉ
-# ===================================================
-
-def safe_text(x):
-    if x is None:
+def safe_text(value) -> str:
+    if value is None or (isinstance(value, float) and np.isnan(value)):
         return ""
-    return str(x)
+    return str(value)
 
-# ===================================================
-# OUTIL : TEXTE NORMAL
-# ===================================================
 
-def pdf_text(pdf, text):
-    pdf.set_font("DejaVu", "", 12)
-    pdf.set_text_color(0, 0, 0)
-    pdf.multi_cell(0, 8, safe_text(text))
-    pdf.ln(2)
+def format_index(value) -> str:
+    if value is None or pd.isna(value):
+        return "Données insuffisantes"
+    return f"{float(value):.1f} / 100"
 
-# ===================================================
-# OUTIL : TABLEAU CLINIQUE
-# ===================================================
 
-def pdf_table(pdf, table_dict):
-    pdf.set_font("DejaVu", "", 12)
-    for key, value in table_dict.items():
-        pdf.set_text_color(*COLOR_PRIMARY)
-        pdf.cell(80, 8, f"{key} :", border=0)
-        pdf.set_text_color(0, 0, 0)
-        pdf.cell(40, 8, safe_text(value), ln=True)
-    pdf.ln(5)
-
-# ===================================================
-# OUTIL : COURBES
-# ===================================================
-
-def save_curve(series, title, filename):
-    plt.figure(figsize=(6, 3))
-    plt.plot(series.index, series.values, marker="o", color="#4CAF50")
-    plt.title(title)
-    plt.grid(alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(filename)
-    plt.close()
-
-# ===================================================
-# EXPORT PDF SIMPLE
-# ===================================================
-
-def export_simple_pdf(df_patient, table, interpretation, neuro_index):
-
+def new_pdf() -> FPDF:
     pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
 
-    # Police Unicode
-    pdf.add_font("DejaVu", "", "DejaVuSans.ttf", uni=True)
-    pdf.add_font("DejaVu", "B", "DejaVuSans.ttf", uni=True)
-    pdf.set_font("DejaVu", "", 12)
-
-    pdf_title(pdf, "Bilan Neurovisuel – Résumé")
-
-    pdf_subtitle(pdf, "Index neurovisuel")
-    pdf_text(pdf, f"Score global : {round(neuro_index, 1)} / 100")
-
-    pdf_subtitle(pdf, "Tableau clinique")
-    pdf_table(pdf, table)
-
-    pdf_subtitle(pdf, "Interprétation")
-    for line in interpretation:
-        pdf_text(pdf, f"- {line}")
-
-    filename = "bilan_simple.pdf"
-    pdf.output(filename)
-
-    return filename
-
-# ===================================================
-# EXPORT PDF COMPLET – RAPPORT CLINIQUE
-# ===================================================
-
-def export_full_pdf(df_patient, table, interpretation, recos, neuro_index):
-
-    pdf = FPDF()
-    pdf.add_page()
-
-    # Police Unicode
-    pdf.add_font("DejaVu", "", "DejaVuSans.ttf", uni=True)
-    pdf.add_font("DejaVu", "B", "DejaVuSans.ttf", uni=True)
-    pdf.set_font("DejaVu", "", 12)
-
-    # TITRE
-    pdf_title(pdf, "Rapport Clinique Orthoptique – Analyse Neurovisuelle")
-
-    # IDENTITÉ PATIENT
-    pdf_subtitle(pdf, "Identité patient (anonymisée)")
-    last = df_patient.iloc[-1]
-    pdf_text(pdf, f"ID patient : {safe_text(last['patient_id'])}")
-    pdf_text(pdf, f"Âge : {safe_text(last['age'])} ans")
-    pdf_text(pdf, f"Statut TDAH : {safe_text(last['tdah'])}")
-    pdf.ln(3)
-
-    # INDEX
-    pdf_subtitle(pdf, "Index neurovisuel")
-    pdf_text(pdf, f"Score global : {round(neuro_index, 1)} / 100")
-    pdf.ln(3)
-
-    # TABLEAU CLINIQUE
-    pdf_subtitle(pdf, "Tableau clinique")
-    pdf_table(pdf, table)
-
-    # INTERPRÉTATION
-    pdf_subtitle(pdf, "Interprétation orthoptique")
-    for line in interpretation:
-        pdf_text(pdf, f"- {safe_text(line)}")
-
-    # RECOMMANDATIONS
-    pdf_subtitle(pdf, "Recommandations orthoptiques")
-    for r in recos:
-        pdf_text(pdf, f"- {safe_text(r)}")
-  
-    # COMMENTAIRE ORTHOPTISTE
-    pdf_subtitle(pdf, "Commentaire orthoptiste")
-    last_comment = df_patient.iloc[-1].get("commentaire", "")
-
-    if last_comment and str(last_comment).strip() != "":
-        pdf_text(pdf, safe_text(last_comment))
-    else:
-        pdf_text(pdf, "Aucun commentaire enregistré pour cette séance.")
-
-    # COURBES
-    pdf.add_page()
-    pdf_title(pdf, "Courbes d’évolution")
-
-    save_curve(
-        df_patient.set_index("session_number")["neuro_index"],
-        "Évolution de l’index neurovisuel",
-        "curve_index.png"
+    regular_font = font_manager.findfont("DejaVu Sans")
+    bold_font = font_manager.findfont(
+        font_manager.FontProperties(family="DejaVu Sans", weight="bold")
     )
-    pdf.image("curve_index.png", w=180)
-    pdf.ln(10)
+    pdf.add_font("DejaVu", "", regular_font)
+    pdf.add_font("DejaVu", "B", bold_font)
+    pdf.set_font("DejaVu", "", 11)
+    return pdf
 
-    biom_cols = ["mean_rt", "variabilite", "cvrt", "impulsivity", "errors_inhibition"]
 
-    for col in biom_cols:
-        save_curve(
-            df_patient.set_index("session_number")[col],
-            f"Évolution : {col}",
-            f"curve_{col}.png"
-        )
-        pdf.image(f"curve_{col}.png", w=180)
-        pdf.ln(10)
+def pdf_bytes(pdf: FPDF) -> bytes:
+    output = pdf.output()
+    return bytes(output)
 
-    filename = "rapport_clinique.pdf"
-    pdf.output(filename)
 
-    return filename
-
-# ===================================================
-# OUTIL : COULEUR INDEX
-# ===================================================
-
-def get_index_color(neuro_index):
-    if neuro_index >= 70:
-        return (0, 150, 0)      # vert
-    elif neuro_index >= 40:
-        return (200, 140, 0)    # orange
-    else:
-        return (180, 0, 0)      # rouge
-
-# ===================================================
-# EXPORT PDF ORTHO PRO
-# ===================================================
-
-def export_ortho_pro_pdf(df_patient, table, interpretation, recos, neuro_index):
-    pdf = FPDF()
-    pdf.add_page()
-
-    # Police Unicode
-    pdf.add_font("DejaVu", "", "DejaVuSans.ttf", uni=True)
-    pdf.add_font("DejaVu", "B", "DejaVuSans.ttf", uni=True)
-    pdf.set_font("DejaVu", "", 12)
-
-    # ============================
-    # PAGE 1 : SYNTHÈSE CLINIQUE
-    # ============================
-
-    # Titre
+def pdf_title(pdf: FPDF, title: str) -> None:
     pdf.set_font("DejaVu", "B", 18)
     pdf.set_text_color(*COLOR_PRIMARY)
-    pdf.cell(0, 12, "Bilan neurovisuel – Synthèse clinique", ln=True, align="C")
-    pdf.ln(5)
-
-    # Identité patient
-    last = df_patient.iloc[-1]
-    pdf.set_font("DejaVu", "", 12)
-    pdf.set_text_color(0, 0, 0)
-    pdf.cell(0, 8, f"ID patient : {safe_text(last['patient_id'])}", ln=True)
-    pdf.cell(0, 8, f"Âge : {safe_text(last['age'])} ans", ln=True)
-    pdf.cell(0, 8, f"Statut TDAH : {safe_text(last['tdah'])}", ln=True)
-    pdf.ln(5)
-
-    # Index global (gros, centré, couleur)
-    color_index = get_index_color(neuro_index)
-    pdf.set_font("DejaVu", "B", 22)
-    pdf.set_text_color(*color_index)
-    pdf.cell(0, 14, f"Index neurovisuel global : {round(neuro_index, 1)} / 100", ln=True, align="C")
+    pdf.multi_cell(
+        0,
+        10,
+        safe_text(title),
+        align="C",
+        new_x=XPos.LMARGIN,
+        new_y=YPos.NEXT,
+    )
     pdf.ln(4)
 
-    # Phrase de synthèse simple
-    pdf.set_font("DejaVu", "", 12)
-    pdf.set_text_color(0, 0, 0)
-    if neuro_index >= 70:
-        synthese = "Profil attentionnel global satisfaisant."
-    elif neuro_index >= 40:
-        synthese = "Profil attentionnel global intermédiaire, avec fragilités modérées."
-    else:
-        synthese = "Profil attentionnel global fragile, nécessitant une prise en charge soutenue."
-    pdf.multi_cell(0, 8, safe_text(synthese))
-    pdf.ln(4)
 
-    # Interprétation clinique (version courte)
-    pdf.set_font("DejaVu", "B", 14)
+def pdf_subtitle(pdf: FPDF, subtitle: str) -> None:
+    pdf.set_font("DejaVu", "B", 13)
     pdf.set_text_color(*COLOR_SECONDARY)
-    pdf.cell(0, 10, "Interprétation clinique", ln=True)
+    pdf.multi_cell(
+        0,
+        8,
+        safe_text(subtitle),
+        new_x=XPos.LMARGIN,
+        new_y=YPos.NEXT,
+    )
+    pdf.ln(1)
+
+
+def pdf_text(pdf: FPDF, text: str) -> None:
+    pdf.set_font("DejaVu", "", 10)
+    pdf.set_text_color(0, 0, 0)
+    pdf.multi_cell(
+        0,
+        6,
+        safe_text(text),
+        new_x=XPos.LMARGIN,
+        new_y=YPos.NEXT,
+    )
+
+
+def pdf_table(pdf: FPDF, table: dict) -> None:
+    for key, value in table.items():
+        pdf.set_font("DejaVu", "B", 9)
+        pdf.set_text_color(*COLOR_PRIMARY)
+        pdf.multi_cell(
+            0,
+            5,
+            safe_text(key),
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
+        pdf.set_font("DejaVu", "", 10)
+        pdf.set_text_color(0, 0, 0)
+        pdf.multi_cell(
+            0,
+            6,
+            safe_text(value),
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
+        pdf.ln(1)
+
+
+def add_identity(pdf: FPDF, patient_data: pd.DataFrame) -> None:
+    last = patient_data.iloc[-1]
+    pdf_subtitle(pdf, "Patient pseudonymisé")
+    pdf_text(pdf, f"Code : {safe_text(last.get('patient_id'))}")
+    pdf_text(pdf, f"Âge : {safe_text(last.get('age'))} ans")
+    pdf_text(pdf, f"Statut TDA/H déclaré : {safe_text(last.get('tdah'))}")
+    pdf_text(pdf, f"Nombre de séances : {len(patient_data)}")
     pdf.ln(2)
 
-    pdf.set_font("DejaVu", "", 12)
-    pdf.set_text_color(0, 0, 0)
-    for line in interpretation[:5]:
-        pdf.multi_cell(0, 7, f"• {safe_text(line)}")
-    pdf.ln(4)
 
-    # ============================
-    # PAGE 2 : RECOMMANDATIONS
-    # ============================
+def add_index(pdf: FPDF, neuro_index) -> None:
+    pdf_subtitle(pdf, "Index comportemental neurovisuel")
+    pdf.set_font("DejaVu", "B", 18)
+    if neuro_index is None or pd.isna(neuro_index):
+        pdf.set_text_color(*COLOR_GREY)
+    elif neuro_index >= 70:
+        pdf.set_text_color(0, 130, 50)
+    elif neuro_index >= 40:
+        pdf.set_text_color(190, 120, 0)
+    else:
+        pdf.set_text_color(170, 40, 40)
+    pdf.multi_cell(
+        0,
+        10,
+        format_index(neuro_index),
+        align="C",
+        new_x=XPos.LMARGIN,
+        new_y=YPos.NEXT,
+    )
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(2)
+
+
+def add_list(pdf: FPDF, title: str, items: list[str]) -> None:
+    pdf_subtitle(pdf, title)
+    for item in items:
+        pdf_text(pdf, f"• {safe_text(item).lstrip('• ').strip()}")
+    pdf.ln(2)
+
+
+def chart_file(patient_data: pd.DataFrame, column: str, title: str) -> Path | None:
+    if column not in patient_data.columns:
+        return None
+
+    series = pd.to_numeric(patient_data[column], errors="coerce").dropna()
+    if series.empty:
+        return None
+
+    if "session_number" in patient_data.columns:
+        x_values = pd.to_numeric(
+            patient_data.loc[series.index, "session_number"],
+            errors="coerce",
+        )
+    else:
+        x_values = np.arange(1, len(series) + 1)
+
+    temporary = NamedTemporaryFile(delete=False, suffix=".png")
+    temporary.close()
+    path = Path(temporary.name)
+
+    figure, axis = plt.subplots(figsize=(7.2, 3.2))
+    axis.plot(x_values, series.values, marker="o", color="#2E7D32", linewidth=2)
+    axis.set_title(title)
+    axis.set_xlabel("Séance")
+    axis.grid(alpha=0.25)
+    figure.tight_layout()
+    figure.savefig(path, dpi=150)
+    plt.close(figure)
+    return path
+
+
+def add_chart(pdf: FPDF, patient_data: pd.DataFrame, column: str, title: str) -> None:
+    path = chart_file(patient_data, column, title)
+    if path is None:
+        return
+    try:
+        pdf.image(str(path), x=15, w=180)
+        pdf.ln(4)
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def add_disclaimer(pdf: FPDF) -> None:
+    pdf.ln(3)
+    pdf.set_font("DejaVu", "", 8)
+    pdf.set_text_color(*COLOR_GREY)
+    pdf.multi_cell(
+        0,
+        5,
+        "Prototype de recherche. Les seuils, l’index et les estimations ne sont "
+        "pas validés sur une population de référence et ne constituent ni un "
+        "diagnostic ni une décision thérapeutique autonome.",
+        new_x=XPos.LMARGIN,
+        new_y=YPos.NEXT,
+    )
+
+
+def export_simple_pdf(
+    patient_data: pd.DataFrame,
+    table: dict,
+    interpretation: list[str],
+    neuro_index,
+) -> bytes:
+    pdf = new_pdf()
+    pdf_title(pdf, "Bilan neurovisuel – Résumé")
+    add_identity(pdf, patient_data)
+    add_index(pdf, neuro_index)
+    pdf_subtitle(pdf, "Indicateurs")
+    pdf_table(pdf, table)
+    add_list(pdf, "Interprétation descriptive", interpretation)
+    add_disclaimer(pdf)
+    return pdf_bytes(pdf)
+
+
+def export_full_pdf(
+    patient_data: pd.DataFrame,
+    table: dict,
+    interpretation: list[str],
+    recommendations: list[str],
+    neuro_index,
+) -> bytes:
+    pdf = new_pdf()
+    pdf_title(pdf, "Rapport de suivi neurovisuel")
+    add_identity(pdf, patient_data)
+    add_index(pdf, neuro_index)
+    pdf_subtitle(pdf, "Indicateurs de la dernière séance")
+    pdf_table(pdf, table)
+    add_list(pdf, "Interprétation descriptive", interpretation)
+    add_list(pdf, "Pistes à confronter au bilan", recommendations)
+
+    last_comment = safe_text(patient_data.iloc[-1].get("commentaire", "")).strip()
+    if last_comment:
+        pdf_subtitle(pdf, "Commentaire de l’orthoptiste")
+        pdf_text(pdf, last_comment)
 
     pdf.add_page()
+    pdf_title(pdf, "Évolution")
+    add_chart(
+        pdf,
+        patient_data,
+        "neuro_index",
+        "Évolution de l’index comportemental neurovisuel",
+    )
+    add_chart(pdf, patient_data, "median_rt", "Évolution du temps de réaction médian")
+    add_chart(pdf, patient_data, "cvrt", "Évolution du coefficient de variation")
+    add_disclaimer(pdf)
+    return pdf_bytes(pdf)
 
-    pdf.set_font("DejaVu", "B", 16)
-    pdf.set_text_color(*COLOR_PRIMARY)
-    pdf.cell(0, 10, "Recommandations orthoptiques", ln=True)
-    pdf.ln(4)
 
-    pdf.set_font("DejaVu", "", 12)
-    pdf.set_text_color(0, 0, 0)
-    if not recos:
-        pdf.multi_cell(0, 7, "Aucune recommandation spécifique générée.")
-    else:
-        for r in recos[:8]:
-            pdf.multi_cell(0, 7, f"• {safe_text(r)}")
-            pdf.ln(1)
+def export_ortho_pro_pdf(
+    patient_data: pd.DataFrame,
+    table: dict,
+    interpretation: list[str],
+    recommendations: list[str],
+    neuro_index,
+) -> bytes:
+    pdf = new_pdf()
+    pdf_title(pdf, "Synthèse orthoptique neurovisuelle")
+    add_identity(pdf, patient_data)
+    add_index(pdf, neuro_index)
+    add_list(pdf, "Éléments descriptifs", interpretation[:5])
+    add_list(pdf, "Pistes de réflexion", recommendations[:5])
 
-    # ============================
-    # PAGE 3 : ÉVOLUTION
-    # ============================
+    if len(patient_data) >= 2:
+        values = pd.to_numeric(patient_data["neuro_index"], errors="coerce").dropna()
+        if len(values) >= 2:
+            delta = float(values.iloc[-1] - values.iloc[0])
+            pdf_subtitle(pdf, "Évolution observée")
+            pdf_text(
+                pdf,
+                f"Variation entre la première et la dernière séance calculable : "
+                f"{delta:+.1f} point(s).",
+            )
 
-    if "session_number" in df_patient.columns and "neuro_index" in df_patient.columns:
-        pdf.add_page()
-
-        pdf.set_font("DejaVu", "B", 16)
-        pdf.set_text_color(*COLOR_PRIMARY)
-        pdf.cell(0, 10, "Évolution de l’index neurovisuel", ln=True)
-        pdf.ln(4)
-
-        save_curve(
-            df_patient.set_index("session_number")["neuro_index"],
-            "Évolution de l’index neurovisuel",
-            "curve_index_ortho.png"
-        )
-
-        pdf.image("curve_index_ortho.png", w=180)
-        pdf.ln(6)
-
-        pdf.set_font("DejaVu", "", 12)
-        pdf.set_text_color(0, 0, 0)
-        if len(df_patient) >= 2:
-            delta = df_patient.iloc[-1]["neuro_index"] - df_patient.iloc[0]["neuro_index"]
-            if delta > 5:
-                txt = f"Amélioration globale de l’index (+{round(delta,1)} points) depuis le début du suivi."
-            elif delta < -5:
-                txt = f"Baisse globale de l’index ({round(delta,1)} points) depuis le début du suivi."
-            else:
-                txt = "Index global relativement stable au cours des séances."
-        else:
-            txt = "Une seule séance disponible : évolution non interprétable."
-        pdf.multi_cell(0, 7, safe_text(txt))
-
-    filename = "bilan_orthoptiste_pro.pdf"
-    pdf.output(filename)
-
-    return filename
+    pdf.add_page()
+    pdf_title(pdf, "Courbe longitudinale")
+    add_chart(
+        pdf,
+        patient_data,
+        "neuro_index",
+        "Évolution de l’index comportemental neurovisuel",
+    )
+    add_disclaimer(pdf)
+    return pdf_bytes(pdf)
